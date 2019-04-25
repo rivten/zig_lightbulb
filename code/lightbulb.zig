@@ -36,11 +36,22 @@ fn RandomNextU64(Series: *random_series) u64 {
     return (Result);
 }
 
+fn RandomNextU32(Series: *random_series) u32 {
+    var NextU64 = RandomNextU64(Series);
+    var Result = @truncate(u32, NextU64 >> 32);
+    return (Result);
+}
+
+fn RandomChoice(Series: *random_series, ChoiceCount: u32) u32 {
+    var Result = (RandomNextU32(Series) % ChoiceCount);
+    return (Result);
+}
+
 test "xoroshiro" {
     var Series = RandomSeed(1234, 5678);
     var i: usize = 0;
     while (i < 100) : (i += 1) {
-        const RandomValue = RandomNextU64(&Series);
+        const RandomValue = RandomChoice(&Series, 100);
         warn("{}\n", RandomValue);
     }
 }
@@ -50,4 +61,5 @@ pub fn main() !void {
     try stdout.write("Hello world!\n");
 
     var PrisonnerTaken = []bool{false} ** PrisonnerCount;
+    var Series = RandomSeed(1234, 5678);
 }
