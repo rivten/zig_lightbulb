@@ -84,12 +84,7 @@ fn AllPrisonnersPassed(P: [PrisonnerCount]bool) bool {
 }
 
 const strategy = struct {
-    InitPrisonnersInternal: fn (*allocator) [PrisonnerCount]*prisonner,
-    BufferSize: usize,
-
-    fn InitPrisonners(S: *const strategy, Alloc: *allocator) [PrisonnerCount]*prisonner {
-        return (S.InitPrisonnersInternal(Alloc));
-    }
+    Prisonners: [PrisonnerCount]*prisonner,
 };
 
 const first_strategy = struct {
@@ -98,13 +93,15 @@ const first_strategy = struct {
     fn Init() first_strategy {
         return first_strategy{
             .S = strategy{
-                .InitPrisonnersInternal = InitPrisonners,
-                .BufferSize = @sizeOf(counter_prisonner) + (PrisonnerCount - 1) * @sizeOf(simple_prisonner),
+                .Prisonners = InitPrisonners(),
             },
         };
     }
 
-    fn InitPrisonners(Alloc: *allocator) [PrisonnerCount]*prisonner {
+    fn InitPrisonners() [PrisonnerCount]*prisonner {
+        // TODO(hugo): can I use a FixedBuffer allocator since the whole size required is known at compile time ?
+        // TODO(hugo): Deallocate the prisonners in order to do several sim.
+        const Alloc = &std.heap.DirectAllocator.init().allocator;
         var Result: [PrisonnerCount]*prisonner = undefined;
 
         var Counter: *counter_prisonner = &(Alloc.alloc(counter_prisonner, 1) catch unreachable)[0];
@@ -178,19 +175,13 @@ const first_strategy = struct {
     };
 };
 
-const Strat = first_strategy.Init().S;
-
-pub fn main() void {
-    const BufferSize = Strat.BufferSize;
-    var Buffer: [BufferSize]u8 = undefined;
-    const Alloc = &std.heap.FixedBufferAllocator.init(&Buffer).allocator;
-
+fn DoSim(S: *strategy) void {
     var PrisonnerTaken = []bool{false} ** PrisonnerCount;
     var LightState = light_state.Off;
     var Series = RandomSeed(1234, 5678);
     var DayCount: u32 = 0;
 
-    var Prisonners = Strat.InitPrisonners(Alloc);
+    var Prisonners = S.Prisonners;
     while (true) {
         var Index = RandomChoice(&Series, PrisonnerCount);
         PrisonnerTaken[Index] = true;
@@ -203,4 +194,9 @@ pub fn main() void {
     }
     Assert(AllPrisonnersPassed(PrisonnerTaken));
     Warn("Escaped in {} days\n", DayCount);
+}
+
+pub fn main() void {
+    var Strat = first_strategy.Init().S;
+    DoSim(&Strat);
 }
