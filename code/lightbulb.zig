@@ -74,63 +74,6 @@ const prisonner = struct {
     }
 };
 
-const first_strat_counter_prisonner = struct {
-    Prisonner: prisonner,
-    Count: u32,
-
-    fn Init() first_strat_counter_prisonner {
-        return first_strat_counter_prisonner{
-            .Prisonner = prisonner{
-                .TellFinishInternal = TellFinish,
-                .EndLightStateInternal = EndLightState,
-            },
-            .Count = 0,
-        };
-    }
-
-    fn TellFinish(P: *prisonner) bool {
-        const Self = @fieldParentPtr(first_strat_counter_prisonner, "Prisonner", P);
-        return (Self.Count == (PrisonnerCount - 1));
-    }
-
-    fn EndLightState(P: *prisonner, L: light_state) light_state {
-        var Self = @fieldParentPtr(first_strat_counter_prisonner, "Prisonner", P);
-        if (L == light_state.On) {
-            Self.Count += 1;
-            //Warn("Count is {}.\n", Self.Count);
-        }
-        return (light_state.Off);
-    }
-};
-
-const first_strat_simple_prisonner = struct {
-    Prisonner: prisonner,
-    HasMarked: bool,
-
-    fn Init() first_strat_simple_prisonner {
-        return first_strat_simple_prisonner{
-            .Prisonner = prisonner{
-                .TellFinishInternal = TellFinish,
-                .EndLightStateInternal = EndLightState,
-            },
-            .HasMarked = false,
-        };
-    }
-
-    fn TellFinish(P: *prisonner) bool {
-        return (false);
-    }
-
-    fn EndLightState(P: *prisonner, L: light_state) light_state {
-        var Self = @fieldParentPtr(first_strat_simple_prisonner, "Prisonner", P);
-        if (L == light_state.Off and !Self.HasMarked) {
-            Self.HasMarked = true;
-            return (light_state.On);
-        }
-        return (L);
-    }
-};
-
 fn AllPrisonnersPassed(P: [PrisonnerCount]bool) bool {
     for (P) |HasBeenOut| {
         if (!HasBeenOut) {
@@ -140,8 +83,105 @@ fn AllPrisonnersPassed(P: [PrisonnerCount]bool) bool {
     return (true);
 }
 
+const strategy = struct {
+    InitPrisonnersInternal: fn (*allocator) [PrisonnerCount]*prisonner,
+    BufferSize: usize,
+
+    fn InitPrisonners(S: *const strategy, Alloc: *allocator) [PrisonnerCount]*prisonner {
+        return (S.InitPrisonnersInternal(Alloc));
+    }
+};
+
+const first_strategy = struct {
+    S: strategy,
+
+    fn Init() first_strategy {
+        return first_strategy{
+            .S = strategy{
+                .InitPrisonnersInternal = InitPrisonners,
+                .BufferSize = @sizeOf(counter_prisonner) + (PrisonnerCount - 1) * @sizeOf(simple_prisonner),
+            },
+        };
+    }
+
+    fn InitPrisonners(Alloc: *allocator) [PrisonnerCount]*prisonner {
+        var Result: [PrisonnerCount]*prisonner = undefined;
+
+        var Counter: *counter_prisonner = &(Alloc.alloc(counter_prisonner, 1) catch unreachable)[0];
+        Counter.* = counter_prisonner.Init();
+        Result[0] = &Counter.Prisonner;
+
+        var Simple: []simple_prisonner = Alloc.alloc(simple_prisonner, PrisonnerCount - 1) catch unreachable;
+        for (Result[1..]) |*P, i| {
+            Simple[i] = simple_prisonner.Init();
+            P.* = &Simple[i].Prisonner;
+        }
+
+        return (Result);
+    }
+
+    const counter_prisonner = struct {
+        Prisonner: prisonner,
+        Count: u32,
+
+        fn Init() counter_prisonner {
+            return counter_prisonner{
+                .Prisonner = prisonner{
+                    .TellFinishInternal = TellFinish,
+                    .EndLightStateInternal = EndLightState,
+                },
+                .Count = 0,
+            };
+        }
+
+        fn TellFinish(P: *prisonner) bool {
+            const Self = @fieldParentPtr(counter_prisonner, "Prisonner", P);
+            return (Self.Count == (PrisonnerCount - 1));
+        }
+
+        fn EndLightState(P: *prisonner, L: light_state) light_state {
+            var Self = @fieldParentPtr(counter_prisonner, "Prisonner", P);
+            if (L == light_state.On) {
+                Self.Count += 1;
+                //Warn("Count is {}.\n", Self.Count);
+            }
+            return (light_state.Off);
+        }
+    };
+
+    const simple_prisonner = struct {
+        Prisonner: prisonner,
+        HasMarked: bool,
+
+        fn Init() simple_prisonner {
+            return simple_prisonner{
+                .Prisonner = prisonner{
+                    .TellFinishInternal = TellFinish,
+                    .EndLightStateInternal = EndLightState,
+                },
+                .HasMarked = false,
+            };
+        }
+
+        fn TellFinish(P: *prisonner) bool {
+            return (false);
+        }
+
+        fn EndLightState(P: *prisonner, L: light_state) light_state {
+            var Self = @fieldParentPtr(simple_prisonner, "Prisonner", P);
+            if (L == light_state.Off and !Self.HasMarked) {
+                Self.HasMarked = true;
+                return (light_state.On);
+            }
+            return (L);
+        }
+    };
+};
+
+const Strat = first_strategy.Init().S;
+
 pub fn main() void {
-    const BufferSize = @sizeOf(first_strat_counter_prisonner) + (PrisonnerCount - 1) * @sizeOf(first_strat_simple_prisonner);
+    const BufferSize = Strat.BufferSize;
     var Buffer: [BufferSize]u8 = undefined;
     const Alloc = &std.heap.FixedBufferAllocator.init(&Buffer).allocator;
 
@@ -150,22 +190,7 @@ pub fn main() void {
     var Series = RandomSeed(1234, 5678);
     var DayCount: u32 = 0;
 
-    var Prisonners = init: {
-        var InitPris: [PrisonnerCount]*prisonner = undefined;
-
-        var CounterMem: *first_strat_counter_prisonner = &(Alloc.alloc(first_strat_counter_prisonner, 1) catch unreachable)[0];
-        CounterMem.* = first_strat_counter_prisonner.Init();
-        InitPris[0] = &CounterMem.Prisonner;
-
-        var SimpleMem: []first_strat_simple_prisonner = Alloc.alloc(first_strat_simple_prisonner, PrisonnerCount - 1) catch unreachable;
-
-        for (InitPris[1..]) |*p, i| {
-            SimpleMem[i] = first_strat_simple_prisonner.Init();
-            p.* = &SimpleMem[i].Prisonner;
-        }
-        break :init InitPris;
-    };
-
+    var Prisonners = Strat.InitPrisonners(Alloc);
     while (true) {
         var Index = RandomChoice(&Series, PrisonnerCount);
         PrisonnerTaken[Index] = true;
