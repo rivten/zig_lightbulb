@@ -1,5 +1,6 @@
 const std = @import("std");
-const warn = std.debug.warn;
+const Warn = std.debug.warn;
+const Assert = std.debug.assert;
 const allocator = std.mem.Allocator;
 
 const random_series = struct {
@@ -60,18 +61,16 @@ const light_state = enum {
     Off,
 };
 
-const prisonner_state = struct {};
-
 const prisonner = struct {
     TellFinishInternal: fn (*prisonner) bool,
     EndLightStateInternal: fn (*prisonner, light_state) light_state,
 
-    fn TellFinish(Self: *prisonner) bool {
-        return (Self.TellFinishInternal(Self));
+    fn TellFinish(P: *prisonner) bool {
+        return (P.TellFinishInternal(P));
     }
 
-    fn EndLightState(Self: *prisonner, L: light_state) light_state {
-        return (Self.EndLightStateInternal(Self, L));
+    fn EndLightState(P: *prisonner, L: light_state) light_state {
+        return (P.EndLightStateInternal(P, L));
     }
 };
 
@@ -98,7 +97,7 @@ const first_strat_counter_prisonner = struct {
         var Self = @fieldParentPtr(first_strat_counter_prisonner, "Prisonner", P);
         if (L == light_state.On) {
             Self.Count += 1;
-            warn("Count is {}.\n", Self.Count);
+            //Warn("Count is {}.\n", Self.Count);
         }
         return (light_state.Off);
     }
@@ -132,8 +131,18 @@ const first_strat_simple_prisonner = struct {
     }
 };
 
+fn AllPrisonnersPassed(P: [PrisonnerCount]bool) bool {
+    for (P) |HasBeenOut| {
+        if (!HasBeenOut) {
+            return (false);
+        }
+    }
+    return (true);
+}
+
 pub fn main() void {
-    var Buffer: [1024]u8 = undefined;
+    const BufferSize = @sizeOf(first_strat_counter_prisonner) + (PrisonnerCount - 1) * @sizeOf(first_strat_simple_prisonner);
+    var Buffer: [BufferSize]u8 = undefined;
     const Alloc = &std.heap.FixedBufferAllocator.init(&Buffer).allocator;
 
     var PrisonnerTaken = []bool{false} ** PrisonnerCount;
@@ -142,22 +151,31 @@ pub fn main() void {
     var DayCount: u32 = 0;
 
     var Prisonners = init: {
-        var InitPris: [PrisonnerCount]prisonner = undefined;
-        InitPris[0] = first_strat_counter_prisonner.Init().Prisonner;
-        for (InitPris[1..]) |*p| {
-            p.* = first_strat_simple_prisonner.Init().Prisonner;
+        var InitPris: [PrisonnerCount]*prisonner = undefined;
+
+        var CounterMem: *first_strat_counter_prisonner = &(Alloc.alloc(first_strat_counter_prisonner, 1) catch unreachable)[0];
+        CounterMem.* = first_strat_counter_prisonner.Init();
+        InitPris[0] = &CounterMem.Prisonner;
+
+        var SimpleMem: []first_strat_simple_prisonner = Alloc.alloc(first_strat_simple_prisonner, PrisonnerCount - 1) catch unreachable;
+
+        for (InitPris[1..]) |*p, i| {
+            SimpleMem[i] = first_strat_simple_prisonner.Init();
+            p.* = &SimpleMem[i].Prisonner;
         }
         break :init InitPris;
     };
+
     while (true) {
         var Index = RandomChoice(&Series, PrisonnerCount);
         PrisonnerTaken[Index] = true;
-        var Prisonner: *prisonner = &Prisonners[Index];
+        var Prisonner: *prisonner = Prisonners[Index];
         LightState = Prisonner.EndLightState(LightState);
         if (Prisonner.TellFinish()) {
             break;
         }
         DayCount += 1;
     }
-    warn("Escaped in {} days\n", DayCount);
+    Assert(AllPrisonnersPassed(PrisonnerTaken));
+    Warn("Escaped in {} days\n", DayCount);
 }
