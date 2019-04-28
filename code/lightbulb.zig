@@ -54,7 +54,9 @@ test "xoroshiro" {
     }
 }
 
-const PrisonnerCount = 100;
+const PrisonnerCount: u32 = 100;
+const strategy = first_strategy;
+const SimCount: f32 = 3000.0;
 
 const light_state = enum {
     On,
@@ -83,35 +85,26 @@ fn AllPrisonnersPassed(P: [PrisonnerCount]bool) bool {
     return (true);
 }
 
-const strategy = struct {
-    Prisonners: [PrisonnerCount]*prisonner,
-};
-
 const first_strategy = struct {
-    S: strategy,
+    Counter: counter_prisonner,
+    Simples: [PrisonnerCount - 1]simple_prisonner,
 
     fn Init() first_strategy {
-        return first_strategy{
-            .S = strategy{
-                .Prisonners = InitPrisonners(),
-            },
-        };
+        var Result: first_strategy = undefined;
+        Result.Counter = counter_prisonner.Init();
+
+        for (Result.Simples) |*P| {
+            P.* = simple_prisonner.Init();
+        }
+
+        return (Result);
     }
 
-    fn InitPrisonners() [PrisonnerCount]*prisonner {
-        // TODO(hugo): can I use a FixedBuffer allocator since the whole size required is known at compile time ?
-        // TODO(hugo): Deallocate the prisonners in order to do several sim.
-        const Alloc = &std.heap.DirectAllocator.init().allocator;
+    fn GetPrisonners(S: *first_strategy) [PrisonnerCount]*prisonner {
         var Result: [PrisonnerCount]*prisonner = undefined;
-
-        var Counter: *counter_prisonner = &(Alloc.alloc(counter_prisonner, 1) catch unreachable)[0];
-        Counter.* = counter_prisonner.Init();
-        Result[0] = &Counter.Prisonner;
-
-        var Simple: []simple_prisonner = Alloc.alloc(simple_prisonner, PrisonnerCount - 1) catch unreachable;
+        Result[0] = &S.Counter.Prisonner;
         for (Result[1..]) |*P, i| {
-            Simple[i] = simple_prisonner.Init();
-            P.* = &Simple[i].Prisonner;
+            P.* = &S.Simples[i].Prisonner;
         }
 
         return (Result);
@@ -175,15 +168,14 @@ const first_strategy = struct {
     };
 };
 
-fn DoSim(S: *strategy) void {
+fn DoSim(comptime strategy_type: type, Series: *random_series) u32 {
+    var Prisonners = strategy_type.Init().GetPrisonners();
     var PrisonnerTaken = []bool{false} ** PrisonnerCount;
     var LightState = light_state.Off;
-    var Series = RandomSeed(1234, 5678);
     var DayCount: u32 = 0;
 
-    var Prisonners = S.Prisonners;
     while (true) {
-        var Index = RandomChoice(&Series, PrisonnerCount);
+        var Index = RandomChoice(Series, PrisonnerCount);
         PrisonnerTaken[Index] = true;
         var Prisonner: *prisonner = Prisonners[Index];
         LightState = Prisonner.EndLightState(LightState);
@@ -193,10 +185,19 @@ fn DoSim(S: *strategy) void {
         DayCount += 1;
     }
     Assert(AllPrisonnersPassed(PrisonnerTaken));
-    Warn("Escaped in {} days\n", DayCount);
+    return (DayCount);
 }
 
 pub fn main() void {
-    var Strat = first_strategy.Init().S;
-    DoSim(&Strat);
+    var Series = RandomSeed(1234, 5678);
+    var SumDays: f32 = 0.0;
+    var SimIndex: u32 = 0;
+    while (SimIndex < @floatToInt(u32, SimCount)) {
+        const DayCount = DoSim(strategy, &Series);
+        //Warn("Escaped in {} days\n", DayCount);
+        SumDays += @intToFloat(f32, DayCount);
+        SimIndex += 1;
+    }
+    const Average = SumDays / SimCount;
+    Warn("For {} prisonners, average is {} days\n", PrisonnerCount, Average);
 }
